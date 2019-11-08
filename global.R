@@ -1,0 +1,1 @@
+if(Sys.getenv('SHINY_PORT') == "") options(shiny.maxRequestSize=1000*1024^2)
