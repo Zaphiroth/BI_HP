@@ -141,7 +141,9 @@ graph1 <-
       ))
     salesdata2 <-
       salesdata2[!duplicated(salesdata2[, c("AUDIT.DESC", "CORPORATE.DESC", "PRODUCT.DESC", "date")]),]
-    salesdata2$value <- salesdata2$prod.sum
+    #salesdata2$value <- salesdata2$prod.sum
+    salesdata2$value <- as.character(salesdata2$prod.sum)
+    salesdata2$value <- as.numeric(salesdata2$value)
     
     salesdata2 <-
       salesdata2[order(salesdata2[, "AUDIT.DESC"], 
@@ -279,8 +281,10 @@ graph1 <-
     salesdata3 <-
       salesdata3[!duplicated(salesdata3[, c("AUDIT.DESC", "date")]),]
     
-    salesdata3$value <- salesdata3$area.sum
+    #salesdata3$value <- salesdata3$area.sum
     
+    salesdata3$value <- as.character(salesdata3$area.sum)
+    salesdata3$value <- as.numeric(salesdata3$value)
     
     
     salesdata3 <-
@@ -433,7 +437,10 @@ graph1 <-
                                                 # "CORPORATE.DESC", 
                                                 # "PRODUCT.DESC",
                                                 "date")]),]
-        salesdata4$value <- salesdata4$prod.sum
+        #salesdata4$value <- salesdata4$prod.sum
+        
+        salesdata4$value <- as.character(salesdata4$prod.sum)
+        salesdata4$value <- as.numeric(salesdata4$value)
         
         salesdata4 <-
           salesdata4[order(salesdata4[, "AUDIT.DESC"], 
@@ -631,7 +638,10 @@ graph1 <-
                                                 # "CORPORATE.DESC", 
                                                 # "PRODUCT.DESC",
                                                 "date")]),]
-        salesdata4$value <- salesdata4$prod.sum
+        # salesdata4$value <- salesdata4$prod.sum
+        salesdata4$value <- as.character(salesdata4$prod.sum)
+        salesdata4$value <- as.numeric(salesdata4$value)
+        
         
         salesdata4 <-
           salesdata4[order(salesdata4[, "AUDIT.DESC"], 

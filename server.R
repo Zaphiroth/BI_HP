@@ -12,9 +12,9 @@ library(openxlsx)
 library(shinydashboard)
 library(rlang)
 library(shinyjs)
-library(webshot)
-library(leaflet)
-library(leafletCN)
+# library(webshot)
+# library(leaflet)
+# library(leafletCN)
 library(shinyWidgets)
 library(readr)
 
@@ -43,8 +43,8 @@ server <- function(input, output, session) {
      #   stringsAsFactors = F,
      #   fileEncoding = 'GB2312'
      # )
-    read_csv(inFile.summary$datapath, locale = locale(encoding = "GB18030")) %>%
-      setDF()
+    read_csv(inFile.summary$datapath, locale = locale(encoding = "GB18030")) %>% 
+      data.frame(stringsAsFactors = FALSE)
   })
   
   categorytype <- reactive({
@@ -372,26 +372,19 @@ server <- function(input, output, session) {
   
   ##-- for the KPI summary
   result2 <- reactive({
-    # if ("Out hospital" %in%  input$category) { # input$category == "Out hospital"
-    #   summary1 <- summary()%>%
-    #     mutate(CORPORATE.DESC =
-    #              ifelse(PRODUCT.DESC %in% c("ATROVENT B.I", "COMBIVENT B.I"),
-    #                     "999", CORPORATE.DESC))
-    # } else {
-    #   summary1 <- summary()
-    # }
-    
-    if ("Out hospital" %in% summary()$Category) {
-      summary1 <- summary() %>%
-        mutate(CORPORATE.DESC = ifelse(Category == "Out hospital" &
-                                         CORPORATE.DESC == "B.INGELHEIM" &
-                                         PRODUCT.DESC != "SPIRIVA B.I" &
-                                         PRODUCT.DESC != "SPIOLTO B.I",
-                                       "Others",
-                                       CORPORATE.DESC))
+    if ("Out hospital" ==  input$category && length(input$category) == 1) { # input$category == "Out hospital"
+      summary1 <- summary()%>%
+        mutate(CORPORATE.DESC =
+                 ifelse(PRODUCT.DESC %in% c("ATROVENT B.I", "COMBIVENT B.I"),
+                        "999", CORPORATE.DESC))
     } else {
       summary1 <- summary()
     }
+    
+    # summary1 <- summary()%>%
+    #   mutate(CORPORATE.DESC =
+    #            ifelse(PRODUCT.DESC %in% c("ATROVENT B.I", "COMBIVENT B.I"),
+    #                   "999", CORPORATE.DESC))
     
     filename <- tools::file_path_sans_ext(basename(input$summary$datapath))
     
@@ -577,19 +570,69 @@ server <- function(input, output, session) {
                               "MAT MNC Corporations No.",
                               "MAT Local Corporations No."))
     
-    result4_m <- rmb1 %>%
-      filter(
-        PRODUCT.DESC == "Overall",
-        CORPORATE.DESC != "Overall",
-        Index == "MS%",
-        AUDIT.DESC == "China"
-      ) %>% 
-      left_join(manu_type_map, by = "CORPORATE.DESC") %>%
-      distinct() %>%
-      rename(MANUF.TYPE.DESC = MANUF.TYPE.DESC.y) %>%
-      group_by(MANUF.TYPE.DESC) %>%
-      summarise(index = sum(final, na.rm = TRUE)) %>%
+    # result4_m <- rmb1 %>%
+    #   filter(
+    #     PRODUCT.DESC == "Overall",
+    #     CORPORATE.DESC != "Overall",
+    #     Index == "MS%",
+    #     AUDIT.DESC == "China"
+    #   ) %>% 
+    #   left_join(manu_type_map, by = "CORPORATE.DESC") %>%
+    #   distinct() %>%
+    #   rename(MANUF.TYPE.DESC = MANUF.TYPE.DESC.y) %>%
+    #   group_by(MANUF.TYPE.DESC) %>%
+    #   summarise(index = sum(final, na.rm = TRUE)) %>%
+    #   ungroup() %>%
+    #   spread(MANUF.TYPE.DESC, index) %>%
+    #   mutate(IMPORT = ifelse(IMPORT > 100, 100, IMPORT)) %>%
+    #   mutate(LOCAL = 100 - IMPORT) %>%
+    #   gather(MANUF.TYPE.DESC, index) %>%
+    #   mutate(Index = gsub(" ", "", paste(format(index, nsmall = 2), "%", "")),
+    #          Metrics = ifelse(MANUF.TYPE.DESC == "IMPORT",
+    #                           "MAT MNC MS", "MAT Local MS"))
+    
+    ##-- for the consideration of to be consistent with molecule part
+    
+    chk <- summary()%>%
+      filter(AUDIT.DESC == "China") %>%
+      select(AUDIT.DESC:MANU_CN, contains("mat_RENMINBI")) %>%
+      filter(Category %in% input$category,
+             Sub.category %in% input$subcategory)
+    
+    chk1 <- chk %>%
+      select(1:(ncol(chk) - 5), (ncol(chk) - 1):ncol(chk))
+    
+    colnames(chk1)[(ncol(chk1) - 1):ncol(chk1)] <- c("Y1", "Y2")
+    
+    chk5 <- chk1 %>% 
+      mutate(Y1 = as.numeric(Y1),
+             Y2 = as.numeric(Y2)) %>%
+      mutate(Type = ifelse(MANUF.TYPE.DESC %in% c("IMPORT", "JOINT-VENTURE"),
+                           "MNC", "Local")) %>%
+      group_by(COMPS.DESC = "Total Category",
+               Type) %>%
+      summarise(Y2 = sum(Y2, na.rm = TRUE)) %>%
       ungroup() %>%
+      spread(key = Type, value = Y2) 
+    
+    if (!("Local" %in% colnames(chk5))) {
+      chk5_m <- bind_cols(chk5, Local = rep(0, nrow(chk5)))
+    } else if (!("MNC" %in% colnames(chk5))) {
+      chk5_m <- bind_cols(chk5, MNC = rep(0, nrow(chk5)))
+    } else {
+      chk5_m <- chk5
+    }
+    
+    result4_m <- chk5_m %>%
+      mutate(Local = ifelse(is.na(Local), 0, Local),
+             MNC = ifelse(is.na(MNC), 0, MNC),
+             Local_sh = round(Local / (Local + MNC) * 100, 2),
+             MNC_sh = round(MNC / (Local + MNC) * 100, 2),
+             Local_sh = ifelse(is.na(Local_sh), 0, Local_sh),
+             MNC_sh = ifelse(is.na(MNC_sh), 0, MNC_sh)) %>%
+      select(IMPORT = MNC_sh, 
+             LOCAL = Local_sh) %>%
+      gather(MANUF.TYPE.DESC, index) %>%
       mutate(Index = gsub(" ", "", paste(format(index, nsmall = 2), "%", "")),
              Metrics = ifelse(MANUF.TYPE.DESC == "IMPORT",
                               "MAT MNC MS", "MAT Local MS"))
@@ -1071,10 +1114,8 @@ server <- function(input, output, session) {
   tablefor3 <- reactive ({
     result1 <- result1()
     
-    if (!"China"  %in% c(input$region, input$province))
-    {
+    if (!"China"  %in% c(input$region, input$province)) {
       result1 <- result1[which(result1$AUDIT.DESC != "China"), ]
-      
     }
     
     if (input$TA == "Others") {
@@ -1083,7 +1124,6 @@ server <- function(input, output, session) {
         result1[which(result1$CORPORATE.DESC %in% toplist_c()),]
       result2_m <-
         result1[which(result1$COMPS.DESC %in% toplist_m()),]
-      
       
       result2$AUDIT.DESC <-
         factor(
@@ -1659,9 +1699,7 @@ server <- function(input, output, session) {
   ot <- reactive({
     if (input$goButton == 0)
       return(NULL)
-    
     input$goButton
-    
     isolate({
       outputtable <- tablefor3()
       outputtable
@@ -1688,7 +1726,6 @@ server <- function(input, output, session) {
       if (input$goButton == 0) {
         return(NULL)
       }
-      
       isolate({
         dat <-
           DT::datatable(
@@ -2187,7 +2224,45 @@ server <- function(input, output, session) {
       ) %>%
         select(AUDIT.DESC, PRODUCT.DESC, CORPORATE.DESC)
       
+      levels_contains <- list(AUDIT.DESC = levels(ot$AUDIT.DESC),
+                              PRODUCT.DESC = levels(ot$PRODUCT.DESC),
+                              CORPORATE.DESC = levels(ot$CORPORATE.DESC))
+      
       ot <- ot %>% inner_join(top_brand)
+      
+      summary1 <- summary()[which(summary()$AUDIT.DESC == "China"),]
+      ggg <-  rbind.fill(
+        graph1(
+          summary1,
+          cate = input$category,
+          subcate = input$subcategory,
+          value = "RENMINBI",
+          period = input$period,
+          kpi = "abs",
+          window = 1,
+          level = "corporation"
+        )
+      )
+      ggg <- distinct(ggg) %>%
+        filter((CORPORATE.DESC != "Overall" &
+                  COMPS.DESC != "Overall") |
+                 (CORPORATE.DESC == "Overall" &
+                    COMPS.DESC == "Overall")
+        ) 
+      tmp <- ggg[order(-ggg[, length(ggg)]),]$PRODUCT.DESC
+      
+      
+      
+      ot$AUDIT.DESC <- factor(ot$AUDIT.DESC, 
+                              levels = levels_contains$AUDIT.DESC)
+      ot$CORPORATE.DESC <- factor(ot$CORPORATE.DESC, 
+                                  levels = levels_contains$CORPORATE.DESC)
+      ot$PRODUCT.DESC <- factor(ot$PRODUCT.DESC, levels = tmp)
+      
+      ot <-
+        ot[order(ot$AUDIT.DESC,
+                 ot$CORPORATE.DESC,
+                 ot$PRODUCT.DESC),]
       
       ot$AUDIT.DESC <- gsub(" .*$", "", ot$AUDIT.DESC)
       
@@ -2355,7 +2430,48 @@ server <- function(input, output, session) {
       ) %>%
         select(AUDIT.DESC, PRODUCT.DESC, COMPS.DESC)
       
+      levels_contains <- list(AUDIT.DESC = levels(ot$AUDIT.DESC),
+                              PRODUCT.DESC = levels(ot$PRODUCT.DESC),
+                              COMPS.DESC = levels(ot$COMPS.DESC))
+      
       ot <- ot %>% inner_join(top_brand)
+     
+      
+      summary1 <- summary()[which(summary()$AUDIT.DESC == "China"),]
+      ggg <-  rbind.fill(
+        graph1(
+          summary1,
+          cate = input$category,
+          subcate = input$subcategory,
+          value = "RENMINBI",
+          period = input$period,
+          kpi = "abs",
+          window = 1,
+          level = "corporation"
+        )
+      )
+      ggg <- distinct(ggg) %>%
+        filter((CORPORATE.DESC != "Overall" &
+                  COMPS.DESC != "Overall") |
+                 (CORPORATE.DESC == "Overall" &
+                    COMPS.DESC == "Overall")
+        ) 
+      tmp <- ggg[order(-ggg[, length(ggg)]),]$PRODUCT.DESC
+      
+      
+      ot$AUDIT.DESC <- factor(ot$AUDIT.DESC, 
+                              levels = levels_contains$AUDIT.DESC)
+      ot$COMPS.DESC <- factor(ot$COMPS.DESC, 
+                                  levels = levels_contains$COMPS.DESC)
+      
+      ot$PRODUCT.DESC <- factor(ot$PRODUCT.DESC, levels = tmp)
+      
+      ot <-
+        ot[order(ot$AUDIT.DESC,
+                        ot$COMPS.DESC,
+                        ot$PRODUCT.DESC),]
+      
+      
       ot$AUDIT.DESC <- gsub(" .*$", "", ot$AUDIT.DESC)
       ot$PRODUCT.DESC <- as.character(ot$PRODUCT.DESC)
       ot$COMPS.DESC <- as.character(ot$COMPS.DESC)
@@ -3785,26 +3901,28 @@ server <- function(input, output, session) {
       return(NULL)
     }
     
-    if ("Out hospital" %in% summary()$Category) {
-      summary1 <- summary() %>%
-        mutate(CORPORATE.DESC = ifelse(Category == "Out hospital" &
-                                         CORPORATE.DESC == "B.INGELHEIM" &
-                                         PRODUCT.DESC != "SPIRIVA B.I" &
-                                         PRODUCT.DESC != "SPIOLTO B.I",
-                                       "Others",
-                                       CORPORATE.DESC))
-    } else {
-      summary1 <- summary()
-    }
-    
     if ("RENMINBI"  %in% input$value) {
       if ("ALL" %in% input$province) {
         summary <-
-          summary1[which(summary1$AUDIT.DESC %in% c("China", input$region,  province())),]
+          summary()[which(summary()$AUDIT.DESC %in% c("China", input$region,  province())),]
       } else {
         summary <-
-          summary1[which(summary1$AUDIT.DESC %in% c("China", input$region, input$province)),]
+          summary()[which(summary()$AUDIT.DESC %in% c("China", input$region, input$province)),]
       }
+      
+      if ("Out hospital" ==  input$category && length(input$category) == 1) { # input$category == "Out hospital"
+        summary <- summary%>%
+          mutate(CORPORATE.DESC =
+                   ifelse(PRODUCT.DESC %in% c("ATROVENT B.I", "COMBIVENT B.I"),
+                          "999", CORPORATE.DESC))
+      } 
+      
+      # summary <- summary %>%
+      #   mutate(CORPORATE.DESC =
+      #            ifelse(PRODUCT.DESC %in% c("ATROVENT B.I", "COMBIVENT B.I"),
+      #                   "999", CORPORATE.DESC))
+
+    
       rmb <- rbind.fill(
         graph1(
           summary,
@@ -3837,11 +3955,15 @@ server <- function(input, output, session) {
     if ("UNIT" %in% input$value) {
       if ("ALL" %in% input$province) {
         summary <-
-          summary1[which(summary1$AUDIT.DESC %in% c("China", input$region,  province())),]
+          summary()[which(summary()$AUDIT.DESC %in% c("China", input$region,  province())),]
       } else{
         summary <-
-          summary1[which(summary1$AUDIT.DESC %in% c("China", input$region, input$province)),]
+          summary()[which(summary()$AUDIT.DESC %in% c("China", input$region, input$province)),]
       }
+      summary <- summary %>%
+        mutate(CORPORATE.DESC =
+                 ifelse(PRODUCT.DESC %in% c("ATROVENT B.I", "COMBIVENT B.I"),
+                        "999", CORPORATE.DESC))
       
       unit <- rbind.fill(
         graph1(
@@ -3874,11 +3996,15 @@ server <- function(input, output, session) {
     if ("DOT"  %in% input$value) {
       if ("ALL" %in% input$province) {
         summary <-
-          summary1[which(summary1$AUDIT.DESC %in% c("China", input$region,  province())),]
+          summary()[which(summary()$AUDIT.DESC %in% c("China", input$region,  province())),]
       } else{
         summary <-
-          summary1[which(summary1$AUDIT.DESC %in% c("China", input$region, input$province)),]
+          summary()[which(summary()$AUDIT.DESC %in% c("China", input$region, input$province)),]
       }
+      summary <- summary %>%
+        mutate(CORPORATE.DESC =
+                 ifelse(PRODUCT.DESC %in% c("ATROVENT B.I", "COMBIVENT B.I"),
+                        "999", CORPORATE.DESC))
       
       dot <- rbind.fill(
         graph1(
@@ -5087,35 +5213,27 @@ server <- function(input, output, session) {
       return(NULL)
     }
     
-    if ("Out hospital" %in% summary()$Category) {
-      summary1 <- summary() %>%
-        mutate(CORPORATE.DESC = ifelse(Category == "Out hospital" &
-                                         CORPORATE.DESC == "B.INGELHEIM" &
-                                         PRODUCT.DESC != "SPIRIVA B.I" &
-                                         PRODUCT.DESC != "SPIOLTO B.I",
-                                       "Others",
-                                       CORPORATE.DESC))
-    } else {
-      summary1 <- summary()
-    }
-    
-      
-      
     if ("RENMINBI"  %in% input$value) {
       if ("ALL" %in% input$province) {
         summary <-
-          summary1[which(summary1$AUDIT.DESC %in% c("China", input$region,  province())),]
+          summary()[which(summary()$AUDIT.DESC %in% c("China", input$region,  province())),]
       } else {
         summary <-
-          summary1[which(summary1$AUDIT.DESC %in% c("China", input$region, input$province)),]
+          summary()[which(summary()$AUDIT.DESC %in% c("China", input$region, input$province)),]
       }
-      # if ("ALL" %in% input$province) {
-      #   summary <-
-      #     summary()[which(summary()$AUDIT.DESC %in% c("China", input$region,  province())),]
-      # } else {
-      #   summary <-
-      #     summary()[which(summary()$AUDIT.DESC %in% c("China", input$region, input$province)),]
-      # }
+      
+      if ("Out hospital" ==  input$category && length(input$category) == 1) { # input$category == "Out hospital"
+        summary <- summary%>%
+          mutate(CORPORATE.DESC =
+                   ifelse(PRODUCT.DESC %in% c("ATROVENT B.I", "COMBIVENT B.I"),
+                          "999", CORPORATE.DESC))
+      } 
+      
+      # summary <- summary %>%
+      #   mutate(CORPORATE.DESC =
+      #            ifelse(PRODUCT.DESC %in% c("ATROVENT B.I", "COMBIVENT B.I"),
+      #                   "999", CORPORATE.DESC))
+      
       rmb <- rbind.fill(
         graph1(
           summary,
@@ -5153,6 +5271,10 @@ server <- function(input, output, session) {
         summary <-
           summary()[which(summary()$AUDIT.DESC %in% c("China", input$region, input$province)),]
       }
+      summary <- summary %>%
+        mutate(CORPORATE.DESC =
+                 ifelse(PRODUCT.DESC %in% c("ATROVENT B.I", "COMBIVENT B.I"),
+                        "999", CORPORATE.DESC))
       
       unit <- rbind.fill(
         graph1(
@@ -5190,6 +5312,10 @@ server <- function(input, output, session) {
         summary <-
           summary()[which(summary()$AUDIT.DESC %in% c("China", input$region, input$province)),]
       }
+      summary <- summary %>%
+        mutate(CORPORATE.DESC =
+                 ifelse(PRODUCT.DESC %in% c("ATROVENT B.I", "COMBIVENT B.I"),
+                        "999", CORPORATE.DESC))
       
       dot <- rbind.fill(
         graph1(
@@ -5861,7 +5987,7 @@ server <- function(input, output, session) {
           )
         ) %>%
         layout(
-          title='Sub-category and Molecule MAT Value GR',
+          title='China: China: Sub-category and Molecule MAT Value GR',
           autosize = T,
           margin =  list(
             l = 250
@@ -5916,7 +6042,7 @@ server <- function(input, output, session) {
           )
         ) %>%
         layout(
-          title='Sub-category and Molecule MAT Value GR',
+          title='China: Sub-category and Molecule MAT Value GR',
           autosize = T,
           margin =  list(
             l = 250
@@ -6079,7 +6205,7 @@ server <- function(input, output, session) {
                         xanchor = "center",
                         orientation = "h"),
           barmode = 'stack',
-          title = "MNC vs. Local MS By Molecule MAT Value",
+          title = "China: Sub-category and Molecule MAT Value GR",
           # paper_bgcolor = 'rgb(248, 248, 255)', plot_bgcolor = 'rgb(248, 248, 255)',
           autosize = T,
           margin =  list(
@@ -6158,7 +6284,7 @@ server <- function(input, output, session) {
                         xanchor = "center",
                         orientation = "h"),
           barmode = 'stack',
-          title = "MNC vs. Local MS By Molecule MAT Value",
+          title = "China: Sub-category and Molecule MAT Value GR",
           # paper_bgcolor = 'rgb(248, 248, 255)', plot_bgcolor = 'rgb(248, 248, 255)',
           autosize = T,
           margin =  list(
@@ -6377,6 +6503,15 @@ server <- function(input, output, session) {
         summary <-
           summary()[which(summary()$AUDIT.DESC %in% c("China", input$region, input$province)),]
       }
+      
+      if ("Out hospital" ==  input$category && length(input$category) == 1) { # input$category == "Out hospital"
+        summary <- summary %>%
+          mutate(CORPORATE.DESC =
+                   ifelse(PRODUCT.DESC %in% c("ATROVENT B.I", "COMBIVENT B.I"),
+                          "999", CORPORATE.DESC))
+      } 
+      
+      
       rmb <- rbind.fill(
         graph1(
           summary,
@@ -6675,6 +6810,186 @@ server <- function(input, output, session) {
     
     plot_data
   })
+  plot_data_c1 <-  reactive({
+    if (input$goButton == 0) {
+      return(NULL)
+    }
+    
+    if ("RENMINBI"  %in% input$value) {
+      if ("ALL" %in% input$province) {
+        summary <-
+          summary()[which(summary()$AUDIT.DESC %in% c("China", input$region,  province())),]
+      } else {
+        summary <-
+          summary()[which(summary()$AUDIT.DESC %in% c("China", input$region, input$province)),]
+      }
+      
+      if ("Out hospital" ==  input$category && length(input$category) == 1) { # input$category == "Out hospital"
+        summary <- summary%>%
+          mutate(CORPORATE.DESC =
+                   ifelse(PRODUCT.DESC %in% c("ATROVENT B.I", "COMBIVENT B.I"),
+                          "999", CORPORATE.DESC))
+      } 
+      
+      rmb <- rbind.fill(
+        graph1(
+          summary,
+          cate = input$category,
+          subcate = input$subcategory,
+          value = "RENMINBI",
+          period = input$period,
+          kpi = c("abs", "gr"),
+          window = as.numeric(input$window),
+          level = "corporation"
+        ),
+        graph1(
+          summary,
+          cate = input$category,
+          subcate = input$subcategory,
+          value = "RENMINBI",
+          period = input$period,
+          kpi = c("abs", "gr"),
+          window = as.numeric(input$window),
+          level = "molecule"
+        )
+      )
+      rmb <- distinct(rmb)
+      
+    } else{
+      rmb <- NULL
+    }
+    
+    
+    if ("UNIT" %in% input$value) {
+      if ("ALL" %in% input$province) {
+        summary <-
+          summary()[which(summary()$AUDIT.DESC %in% c("China", input$region,  province())),]
+      } else{
+        summary <-
+          summary()[which(summary()$AUDIT.DESC %in% c("China", input$region, input$province)),]
+      }
+      summary <- summary %>%
+        mutate(CORPORATE.DESC =
+                 ifelse(PRODUCT.DESC %in% c("ATROVENT B.I", "COMBIVENT B.I"),
+                        "999", CORPORATE.DESC))
+      
+      unit <- rbind.fill(
+        graph1(
+          summary,
+          cate = input$category,
+          subcate = input$subcategory,
+          value = "UNIT",
+          period = input$period,
+          kpi = c("abs", "gr"),
+          window = as.numeric(input$window),
+          level = "corporation"
+        ),
+        graph1(
+          summary,
+          cate = input$category,
+          subcate = input$subcategory,
+          value = "UNIT",
+          period = input$period,
+          kpi = c("abs", "gr"),
+          window = as.numeric(input$window),
+          level = "molecule"
+        )
+      )
+      unit <- distinct(unit)
+      
+    } else{
+      unit <- NULL
+    }
+    
+    if ("DOT"  %in% input$value) {
+      if ("ALL" %in% input$province) {
+        summary <-
+          summary()[which(summary()$AUDIT.DESC %in% c("China", input$region,  province())),]
+      } else{
+        summary <-
+          summary()[which(summary()$AUDIT.DESC %in% c("China", input$region, input$province)),]
+      }
+      summary <- summary %>%
+        mutate(CORPORATE.DESC =
+                 ifelse(PRODUCT.DESC %in% c("ATROVENT B.I", "COMBIVENT B.I"),
+                        "999", CORPORATE.DESC))
+      
+      dot <- rbind.fill(
+        graph1(
+          summary,
+          cate = input$category,
+          subcate = input$subcategory,
+          value = "DOT",
+          period = input$period,
+          kpi = c("abs", "gr"),
+          window = as.numeric(input$window),
+          level = "corporation"
+        ),
+        graph1(
+          summary,
+          cate = input$category,
+          subcate = input$subcategory,
+          value = "DOT",
+          period = input$period,
+          kpi = c("abs", "gr"),
+          window = as.numeric(input$window),
+          level = "molecule"
+        )
+      )
+      dot <- distinct(dot)
+    } else{
+      dot <- NULL
+    }
+    
+    result1 <- rbind(rmb, unit, dot)
+    
+    
+    
+    result1$Measure[which(result1$Measure == "RENMINBI")] <- "RMB"
+    
+    if (is.null(input$sub_measure_c) || is.null(input$sub_region_c)) {
+      return(NULL)
+    } else {
+      test <- result1 %>%
+        filter(Measure %in% input$sub_measure_c) %>%
+        gather(key = "date", value = "value", -c(AUDIT.DESC:Index)) %>%
+        spread(Index, value) %>%
+        filter(PRODUCT.DESC == "Overall", COMPS.DESC == "Overall",
+               (CORPORATE.DESC == "B.INGELHEIM" |
+                  CORPORATE.DESC == "Overall")) %>% 
+        select(AUDIT.DESC, CORPORATE.DESC, Measure, date, ABS, GR = `GR%`) %>%
+        # select(AUDIT.DESC, CORPORATE.DESC, Measure, date) %>%
+        # # rename(GR = `GR%`) %>%
+        # mutate(ABS = 1, GR = 1) %>%
+        filter(AUDIT.DESC %in% input$sub_region_c)
+    }
+    
+    
+    
+    # test <- outputtable %>% filter(AUDIT.DESC %in% input$sub_region) %>%
+    #   select(AUDIT.DESC, CORPORATE.DESC, Measure, date, ABS, GR = `GR%`)
+    # test <- test[, c(1, 4, 15, 16, 17, 18)]
+    # colnames(test)[5] <- "ABS"
+    # colnames(test)[6] <- "GR"
+    # colnames(test)[which(colnames(test) == "GR%")] <- "GR"
+    # test1 <- setDT(test)
+    # test1 <- data.table::dcast(test1,
+    #                            AUDIT.DESC +  Measure + date ~ CORPORATE.DESC,
+    #                            value.var = c("ABS", "GR"))
+    # test1 <- setDF(test1) %>%
+    #   mutate(date = substr(date, 3, 6))
+    
+    test1 <- setDT(test)
+    test1 <- data.table::dcast(test1,
+                               AUDIT.DESC +  Measure + date ~ CORPORATE.DESC,
+                               value.var = c("ABS", "GR"))
+    test1 <- setDF(test1) %>%
+      mutate(Date = paste(substr(date, 1, 4), ".", 
+                          substr(date, 5, 6), sep = ""))
+    
+    test1
+
+  })
   
   plot_data_m <- reactive({
     if (input$goButton == 0) {
@@ -6865,7 +7180,7 @@ server <- function(input, output, session) {
       )
     },
     content = function(file) {
-      write.xlsx(plot_data_c(), file, overwrite = TRUE)
+      write.xlsx(plot_data_c1(), file, overwrite = TRUE)
     }
   )
   

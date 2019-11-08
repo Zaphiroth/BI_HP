@@ -17,7 +17,7 @@ library(shinyWidgets)
 
 ##-- App part
 ui <- dashboardPage(
-  dashboardHeader(title = "IMS CHPA Data Sheet"),
+  dashboardHeader(title = "IQVIA CHPA Data"),
   dashboardSidebar(
     tags$head(includeCSS('./www/fix_siderbar.css')),
     collapsed = FALSE,
